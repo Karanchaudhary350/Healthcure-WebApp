@@ -1,0 +1,56 @@
+name: Gemini PR Review
+env:
+  GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+jobs:
+  gemini-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Get PR Diff
+        id: get-diff
+        run: |
+          mkdir -p diffs
+          FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }})
+          for file in $FILES; do
+            safe_filename=$(echo "$file" | sed 's/\//_/g')
+            git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- "$file" > "diffs/${safe_filename}.diff"
+          done
+
+      - name: Install dependencies
+        run: |
+          python -m pip install google-generativeai
+
+      - name: Run Gemini Review Script
+        id: gemini-review
+        env:
+          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
+        run: |
+          python gemini_review.py
+
+      - name: Post Gemini Review
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('review.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: review
+            });
